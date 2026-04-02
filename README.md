@@ -355,17 +355,6 @@ http://localhost:8000/dashboard
 - 对冲突 PR 发起 conflict resolution task
 - 旧 PR 被 resolved PR 替代时显示 superseded 状态
 
-## 给别人使用的最简单方式
-
-如果你想把这个项目交给别人试用，当前最简单的方式是：
-
-1. 让对方 clone 你的代码
-2. 让对方自己创建 GitHub App
-3. 让对方自己准备 OpenAI API Key
-4. 按本 README 用 Docker Compose 启动
-5. 在自己的仓库里创建带目标 label 的 issue
-
-这比你先做一个公网 SaaS 更容易，也更安全。
 
 ## 常见问题
 
@@ -449,30 +438,4 @@ python -m pytest app/tests/test_toy_repo_integration.py -q -p no:cacheprovider
 5. 访问 `GET /tasks` 查看任务
 6. 访问 `GET /tasks/{task_id}` 查看 attempt、diff、test log、PR 信息
 
-## 关键实现文件
 
-- `app/api/routes/github_webhooks.py`: webhook 接收与验签
-- `app/services/github/webhooks.py`: issue 过滤逻辑
-- `app/services/task_runner/orchestrator.py`: task 落库、去重、状态变更
-- `app/services/task_runner/state_machine.py`: 显式状态机
-- `app/workers/poller.py`: worker 主循环与任务执行
-- `app/services/sandbox/runner.py`: Docker 沙箱命令执行
-- `app/services/sandbox/git_ops.py`: clone / branch / patch / commit / push
-- `app/services/sandbox/repo_config.py`: `.agent.yml` 解析
-- `app/services/sandbox/limits.py`: diff 与路径限制
-- `app/services/openai/agent_loop.py`: Responses API agent loop
-- `app/services/openai/tools.py`: 工具抽象层
-
-## 已验证内容
-
-- 项目测试已在当前环境通过: `52 passed`
-
-## 后续可扩展方向
-
-- 将 worker 轮询升级为消息队列
-- 将 trace 和 artifacts 进一步结构化
-- 为 dashboard 增加登录保护
-- 增加更完整的部署文档
-- 增加自动化评测与失败分类
-- 增加 rerun reason / manual approval / repo allowlist
-- 为沙箱增加网络策略与更严格 seccomp 配置
