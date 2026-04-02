@@ -1,0 +1,1 @@
+"""Toy repo application package."""

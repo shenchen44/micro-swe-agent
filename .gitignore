@@ -1,0 +1,38 @@
+# Environment and secrets
+.env
+secrets/
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# Testing
+.pytest_cache/
+.pytest_tmp/
+*.db
+test_micro_swe_agent.db
+
+# Workspaces (temp clone directories)
+.workspaces/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
