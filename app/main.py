@@ -11,7 +11,7 @@ from app.db.session import init_db
 
 configure_logging()
 
-app = FastAPI(title="micro-swe-agent", version="0.1.2")
+app = FastAPI(title="micro-swe-agent", version="1.0.0")
 
 
 @app.on_event("startup")
