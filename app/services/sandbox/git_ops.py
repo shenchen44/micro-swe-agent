@@ -11,6 +11,13 @@ IGNORED_GENERATED_PATHS = {
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
 
+def _error_details(exc: subprocess.CalledProcessError, context: str) -> str:
+    """Extract error details from a subprocess exception."""
+    stderr = (exc.stderr or "").strip()
+    stdout = (exc.stdout or "").strip()
+    return stderr or stdout or f"{context} failed with exit code {exc.returncode}"
+
+
 def run_git(repo_path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -41,9 +48,7 @@ def set_remote_url(repo_path: Path, remote_name: str, remote_url: str) -> None:
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
-        if "No such remote" in stderr or "No such remote" in stdout:
+        if "No such remote" in (exc.stderr or "").strip() or "No such remote" in (exc.stdout or "").strip():
             try:
                 subprocess.run(
                     ["git", "remote", "add", remote_name, remote_url],
@@ -54,12 +59,8 @@ def set_remote_url(repo_path: Path, remote_name: str, remote_url: str) -> None:
                 )
                 return
             except subprocess.CalledProcessError as add_exc:
-                add_stderr = (add_exc.stderr or "").strip()
-                add_stdout = (add_exc.stdout or "").strip()
-                add_details = add_stderr or add_stdout or f"git remote add failed with exit code {add_exc.returncode}"
-                raise RuntimeError(f"git_remote_set_url_failed: {add_details}") from add_exc
-        details = stderr or stdout or f"git remote set-url failed with exit code {exc.returncode}"
-        raise RuntimeError(f"git_remote_set_url_failed: {details}") from exc
+                raise RuntimeError(f"git_remote_set_url_failed: {_error_details(add_exc, 'git remote add')}") from add_exc
+        raise RuntimeError(f"git_remote_set_url_failed: {_error_details(exc, 'git remote set-url')}") from exc
 
 
 def checkout_new_branch(repo_path: Path, branch_name: str, base_branch: str) -> str:
@@ -126,20 +127,14 @@ def apply_patch(repo_path: Path, patch_text: str) -> None:
     try:
         _run_git_apply(repo_path, patch_text)
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
-        details = stderr or stdout or f"git apply failed with exit code {exc.returncode}"
-        raise RuntimeError(f"git_apply_failed: {details}") from exc
+        raise RuntimeError(f"git_apply_failed: {_error_details(exc, 'git apply')}") from exc
 
 
 def reverse_patch(repo_path: Path, patch_text: str) -> None:
     try:
         _run_git_apply(repo_path, patch_text, reverse=True)
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
-        details = stderr or stdout or f"git apply reverse failed with exit code {exc.returncode}"
-        raise RuntimeError(f"git_apply_reverse_failed: {details}") from exc
+        raise RuntimeError(f"git_apply_reverse_failed: {_error_details(exc, 'git apply reverse')}") from exc
 
 
 def is_generated_path(path: str) -> bool:
@@ -184,10 +179,7 @@ def push_branch(repo_path: Path, branch_name: str) -> None:
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
-        details = stderr or stdout or f"git push failed with exit code {exc.returncode}"
-        raise RuntimeError(f"git_push_failed: {details}") from exc
+        raise RuntimeError(f"git_push_failed: {_error_details(exc, 'git push')}") from exc
 
 
 def list_files(repo_path: Path) -> list[str]:

@@ -20,7 +20,7 @@ from app.services.sandbox.git_ops import checkout_new_branch, clone_repo, commit
 from app.services.sandbox.limits import enforce_patch_limits, parse_diff_stats
 from app.services.sandbox.repo_config import load_repo_config
 from app.services.sandbox.runner import SandboxRunner
-from app.services.task_runner.orchestrator import build_branch_name, ensure_workspace_root, mark_task_failed, transition_task
+from app.services.task_runner.orchestrator import build_branch_name, ensure_workspace_root, get_artifact_content, mark_task_failed, transition_task
 
 
 logger = logging.getLogger(__name__)
@@ -32,15 +32,8 @@ def ensure_mapping(value: object) -> dict:
     return {}
 
 
-def _get_artifact_content(task: Task, artifact_type: TaskArtifactType) -> dict | str | None:
-    for artifact in reversed(task.artifacts):
-        if artifact.artifact_type == artifact_type:
-            return artifact.content
-    return None
-
-
 def _get_raw_webhook(task: Task) -> dict:
-    raw_webhook = _get_artifact_content(task, TaskArtifactType.raw_webhook)
+    raw_webhook = get_artifact_content(task, TaskArtifactType.raw_webhook)
     if isinstance(raw_webhook, dict):
         return raw_webhook
     raise ValueError("raw_webhook_artifact_missing")
@@ -55,14 +48,14 @@ def _build_issue_context(task: Task) -> dict:
         "repository": f"{task.repository.owner}/{task.repository.name}",
         "default_branch": task.repository.default_branch,
     }
-    integration_request = _get_artifact_content(task, TaskArtifactType.integration_request)
+    integration_request = get_artifact_content(task, TaskArtifactType.integration_request)
     if isinstance(integration_request, dict):
         issue_context["integration_request"] = integration_request
     return issue_context
 
 
 def _is_conflict_resolution_task(task: Task) -> bool:
-    integration_request = _get_artifact_content(task, TaskArtifactType.integration_request)
+    integration_request = get_artifact_content(task, TaskArtifactType.integration_request)
     return isinstance(integration_request, dict) and integration_request.get("mode") == "conflict_resolution"
 
 
@@ -367,7 +360,7 @@ async def process_task(task_id: str) -> None:
                 db.commit()
 
                 if _is_conflict_resolution_task(task):
-                    integration_request = ensure_mapping(_get_artifact_content(task, TaskArtifactType.integration_request))
+                    integration_request = ensure_mapping(get_artifact_content(task, TaskArtifactType.integration_request))
                     source_task_ids = integration_request.get("source_task_ids") or []
                     source_pr_numbers = integration_request.get("source_pr_numbers") or []
                     if source_task_ids:

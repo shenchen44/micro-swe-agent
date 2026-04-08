@@ -26,8 +26,27 @@ ACTIVE_TASK_STATUSES = {
 }
 
 
+def _task_options() -> list:
+    """Common options for loading task relationships."""
+    return [selectinload(Task.attempts), selectinload(Task.artifacts), selectinload(Task.repository), selectinload(Task.issue)]
+
+
 def get_task_query() -> Select[tuple[Task]]:
-    return select(Task).options(selectinload(Task.attempts), selectinload(Task.artifacts)).order_by(Task.created_at.desc())
+    return select(Task).options(*_task_options()).order_by(Task.created_at.desc())
+
+
+def _get_latest_artifact(task: Task, artifact_type: TaskArtifactType) -> TaskArtifact | None:
+    """Get the latest artifact of a specific type, searching in reverse order."""
+    return next(
+        (artifact for artifact in reversed(task.artifacts) if artifact.artifact_type == artifact_type),
+        None,
+    )
+
+
+def get_artifact_content(task: Task, artifact_type: TaskArtifactType) -> dict | str | None:
+    """Get the content of the latest artifact of a specific type."""
+    artifact = _get_latest_artifact(task, artifact_type)
+    return artifact.content if artifact else None
 
 
 def upsert_repository_and_issue(db: Session, payload: dict) -> tuple[Repository, Issue]:
@@ -132,10 +151,7 @@ def create_integration_task(
     if any(task.repository_id != repository_id for task in source_tasks):
         raise ValueError("integration_tasks_must_share_repository")
 
-    raw_webhook_artifact = next(
-        (artifact for artifact in source_tasks[0].artifacts if artifact.artifact_type == TaskArtifactType.raw_webhook),
-        None,
-    )
+    raw_webhook_artifact = _get_latest_artifact(source_tasks[0], TaskArtifactType.raw_webhook)
     if raw_webhook_artifact is None:
         raise ValueError("source_task_missing_raw_webhook")
 
@@ -150,18 +166,9 @@ def create_integration_task(
         body_sections.append(f"User guidance:\n{guidance}")
     source_pr_contexts: list[dict] = []
     for task in source_tasks:
-        latest_diff_artifact = next(
-            (artifact for artifact in reversed(task.artifacts) if artifact.artifact_type == TaskArtifactType.diff),
-            None,
-        )
-        latest_model_artifact = next(
-            (artifact for artifact in reversed(task.artifacts) if artifact.artifact_type == TaskArtifactType.model_response),
-            None,
-        )
-        latest_pr_body_artifact = next(
-            (artifact for artifact in reversed(task.artifacts) if artifact.artifact_type == TaskArtifactType.pr_body),
-            None,
-        )
+        latest_diff_artifact = _get_latest_artifact(task, TaskArtifactType.diff)
+        latest_model_artifact = _get_latest_artifact(task, TaskArtifactType.model_response)
+        latest_pr_body_artifact = _get_latest_artifact(task, TaskArtifactType.pr_body)
         summary = latest_model_artifact.content.get("summary") if latest_model_artifact and isinstance(latest_model_artifact.content, dict) else None
         diff_text = latest_diff_artifact.content.get("diff") if latest_diff_artifact and isinstance(latest_diff_artifact.content, dict) else ""
         pr_body = latest_pr_body_artifact.content.get("body") if latest_pr_body_artifact and isinstance(latest_pr_body_artifact.content, dict) else ""

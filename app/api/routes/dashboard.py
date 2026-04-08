@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models.task import Task, TaskArtifactType, TaskStatus
+from app.services.task_runner.orchestrator import get_artifact_content
 from app.db.session import get_db
 from app.services.github.auth import GitHubAuthService
 from app.services.github.pulls import GitHubPullRequestService
@@ -34,20 +35,27 @@ class ConflictResolutionRequest(BaseModel):
     guidance: str | None = None
 
 
-def _artifact_content(task: Task, artifact_type: TaskArtifactType) -> dict | str | None:
-    for artifact in reversed(task.artifacts):
-        if artifact.artifact_type == artifact_type:
-            return artifact.content
-    return None
+def _extractget_artifact_content(task: Task, artifact_type: TaskArtifactType, *keys: str) -> str | dict | None:
+    """Extract nested content from an artifact, following dot-notation keys."""
+    content = get_artifact_content(task, artifact_type)
+    if not isinstance(content, dict):
+        return content if not keys else None
+    result = content
+    for key in keys:
+        if isinstance(result, dict):
+            result = result.get(key)
+        else:
+            return None
+    return result
 
 
 def _installation_id_for_task(task: Task) -> int | None:
-    raw_webhook = _artifact_content(task, TaskArtifactType.raw_webhook)
+    raw_webhook = get_artifact_content(task, TaskArtifactType.raw_webhook)
     return ((raw_webhook or {}).get("installation") or {}).get("id") if isinstance(raw_webhook, dict) else None
 
 
 def _resolution_link_for_task(task: Task) -> dict:
-    artifact = _artifact_content(task, TaskArtifactType.resolution_link)
+    artifact = get_artifact_content(task, TaskArtifactType.resolution_link)
     return artifact if isinstance(artifact, dict) else {}
 
 
@@ -100,8 +108,7 @@ def _is_generic_summary_sentence(value: object) -> bool:
     return False
 
 
-def _is_generic_root_cause(value: object) -> bool:
-    return _is_generic_summary_sentence(value)
+_is_generic_root_cause = _is_generic_summary_sentence  # Alias for semantic clarity
 
 
 def _normalize_changes(value: object) -> list[str]:
@@ -902,9 +909,9 @@ async def list_pr_dashboard_items(db: Session = Depends(get_db)) -> list[dict]:
             continue
         merge_status, merge_status_label, merge_conflict = _merge_status_from_payload(pr_payload)
         resolution_link = _resolution_link_for_task(task)
-        model_response = _artifact_content(task, TaskArtifactType.model_response)
-        diff_artifact = _artifact_content(task, TaskArtifactType.diff)
-        pr_body_artifact = _artifact_content(task, TaskArtifactType.pr_body)
+        model_response = get_artifact_content(task, TaskArtifactType.model_response)
+        diff_artifact = get_artifact_content(task, TaskArtifactType.diff)
+        pr_body_artifact = get_artifact_content(task, TaskArtifactType.pr_body)
         pr_body = pr_body_artifact.get("body") if isinstance(pr_body_artifact, dict) else ""
         summary = model_response.get("summary") if isinstance(model_response, dict) and isinstance(model_response.get("summary"), dict) else {}
         diff_text = diff_artifact.get("diff") if isinstance(diff_artifact, dict) else ""
@@ -1009,7 +1016,7 @@ async def merge_pr(task_id: str, db: Session = Depends(get_db)) -> dict:
     if task.pr_number is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="task_has_no_pr")
 
-    raw_webhook = _artifact_content(task, TaskArtifactType.raw_webhook)
+    raw_webhook = get_artifact_content(task, TaskArtifactType.raw_webhook)
     installation_id = ((raw_webhook or {}).get("installation") or {}).get("id")
     if installation_id is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="installation_id_missing")
