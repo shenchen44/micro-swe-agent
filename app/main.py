@@ -13,7 +13,6 @@ configure_logging()
 
 app = FastAPI(title="micro-swe-agent", version="1.0.0")
 
-
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
