@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/micro_swe_agent"
     openai_api_key: str = ""
-    openai_model: str = "gpt-4.1-mini"
+    openai_model: str = "gpt-5.4"
     openai_base_url: str | None = None
     openai_provider: str = "openai"
     github_app_id: str = ""
