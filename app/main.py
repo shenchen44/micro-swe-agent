@@ -11,11 +11,16 @@ from app.db.session import init_db
 
 configure_logging()
 
-app = FastAPI(title="micro-swe-agent", version="1.1.2")
+app = FastAPI(
+    title="micro-swe-agent",
+    version="1.1.2",
+    description="AI-powered software engineering agent for automating bug fixes and feature implementations",
+)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """Initialize database on application startup."""
     init_db()
 
 
