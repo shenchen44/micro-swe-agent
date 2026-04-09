@@ -1,54 +1,12 @@
 # micro-swe-agent
 
-<div id="lang-switcher">
-  <a href="README-en.md">🇺🇸 English</a>
-  <span>|</span>
-  <a href="README-zh.md">🇨🇳 中文</a>
-</div>
+**[🇺🇸 English](README-en.md)** | **[🇨🇳 中文](README-zh.md)**
 
 ---
 
-> [!NOTE]
-> You are viewing this README in your browser language. Use the links above to switch languages manually.
+micro-swe-agent 是一个可本地自托管运行的 AI coding agent MVP。
 
-<script>
-  // Auto-redirect based on browser language
-  (function () {
-    var lang = navigator.language || navigator.userLanguage || '';
-    var target = lang.toLowerCase().startsWith('zh') ? 'README-zh.md' : 'README-en.md';
-    var note = document.querySelector('blockquote');
-    if (note) {
-      var current = window.location.pathname.split('/').pop();
-      if (current !== target) {
-        var msg = lang.toLowerCase().startsWith('zh')
-          ? '> [!NOTE]\n> 正在根据您的浏览器语言（中文）跳转至中文版…'
-          : '> [!NOTE]\n> Redirecting based on your browser language (English)…';
-        note.textContent = msg;
-        // Auto-switch via links if on GitHub
-        var links = document.querySelectorAll('#lang-switcher a');
-        for (var i = 0; i < links.length; i++) {
-          if (links[i].getAttribute('href') === target) {
-            links[i].style.fontWeight = 'bold';
-            break;
-          }
-        }
-      }
-    }
-  })();
-</script>
-
-## Quick Links
-
-| Language | File | Description |
-|---|---|---|
-| 🇺🇸 English | [README-en.md](README-en.md) | Full English documentation |
-| 🇨🇳 中文 | [README-zh.md](README-zh.md) | 完整中文文档 |
-
-## Overview
-
-**micro-swe-agent** is a self-hostable AI coding agent MVP.
-
-It listens for GitHub App issue webhooks, filters low-risk issues, generates minimal patches for Python repositories in isolated workspaces and Docker sandboxes, runs `pytest`, retries self-fix up to 3 rounds, then pushes a branch, creates a PR, comments on the issue, and displays PR/conflict/integration status in a dashboard.
+它会监听 GitHub App 的 issue webhook，筛选低风险 issue，在隔离工作目录和 Docker 沙箱中为 Python 仓库生成最小补丁，运行 `pytest`，最多自我修复 3 轮，成功后推送分支、创建 PR、回写 issue 评论，并在 dashboard 中展示 PR、冲突状态和整合操作。
 
 ## Architecture
 
@@ -81,7 +39,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 python -m app.workers.poller
 ```
 
-## For Full Documentation
+## Full Documentation
 
-- [🇺🇸 English](README-en.md)
-- [🇨🇳 中文](README-zh.md)
+| Language | File | Description |
+|---|---|---|
+| 🇺🇸 English | [README-en.md](README-en.md) | Full English documentation |
+| 🇨🇳 中文 | [README-zh.md](README-zh.md) | 完整中文文档 |
