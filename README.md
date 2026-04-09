@@ -4,6 +4,38 @@
 
 它会监听 GitHub App 的 issue webhook，筛选低风险 issue，在隔离工作目录和 Docker 沙箱中为 Python 仓库生成最小补丁，运行 `pytest`，最多自我修复 3 轮，成功后推送分支、创建 PR、回写 issue 评论，并在 dashboard 中展示 PR、冲突状态和整合操作。
 
+## Why This Project Matters
+
+这个项目不是一个简单的聊天式代码助手，而是一个带完整执行闭环的 coding agent runtime：
+
+- 接收 GitHub issue webhook 并做任务编排
+- 在受限工具集中进行代码检索、编辑、patch 应用与测试
+- 通过状态机和最多 3 轮重试完成自修复
+- 自动创建 PR，并保留 artifact、diff、测试日志和任务轨迹
+
+## Agent Engineering Highlights
+
+- `Tool-calling agent loop`: 支持 `list_files`、`search_code`、`read_file`、`write_file`、`apply_patch`、`run_tests`
+- `Sandbox guardrails`: 限制允许修改路径、阻止高风险命令、限制最大变更文件数和 diff 行数
+- `Observability`: 记录 task 级与 attempt 级耗时、模型调用次数、工具调用次数
+- `Evaluation-ready`: 提供最小 benchmark runner，可在固定任务集上输出成功率和耗时统计
+
+## Evaluation
+
+可以用最小 benchmark runner 在固定 fixture 上运行 agent，并输出 `benchmark_results/results.json`：
+
+```bash
+python scripts/run_benchmarks.py
+```
+
+输出会包含：
+
+- `success_rate`
+- `avg_duration_ms`
+- 每个任务的 `model_call_count`
+- 每个任务的 `tool_call_count`
+- patch 大小与测试结果
+
 当前项目最适合的使用方式是：
 
 - 你自己 clone 代码后在本机或自己的服务器上运行
@@ -437,5 +469,4 @@ python -m pytest app/tests/test_toy_repo_integration.py -q -p no:cacheprovider
 4. GitHub webhook 到达 `POST /webhooks/github`
 5. 访问 `GET /tasks` 查看任务
 6. 访问 `GET /tasks/{task_id}` 查看 attempt、diff、test log、PR 信息
-
 

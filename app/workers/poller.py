@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -59,6 +61,14 @@ def _is_conflict_resolution_task(task: Task) -> bool:
     return isinstance(integration_request, dict) and integration_request.get("mode") == "conflict_resolution"
 
 
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def _elapsed_ms(start_time: float) -> int:
+    return int((perf_counter() - start_time) * 1000)
+
+
 def _record_attempt(
     db,
     task: Task,
@@ -72,6 +82,11 @@ def _record_attempt(
     test_exit_code: int | None = None,
     test_stdout: str | None = None,
     test_stderr: str | None = None,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    duration_ms: int | None = None,
+    model_duration_ms: int | None = None,
+    tool_call_count: int = 0,
     error_text: str | None = None,
     tool_name: str | None = None,
     tool_arguments: dict | None = None,
@@ -89,6 +104,11 @@ def _record_attempt(
         test_exit_code=test_exit_code,
         test_stdout=test_stdout,
         test_stderr=test_stderr,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        model_duration_ms=model_duration_ms,
+        tool_call_count=tool_call_count,
         result_status=result_status,
     )
     db.add(attempt)
@@ -127,6 +147,7 @@ def _record_attempt(
 async def process_task(task_id: str) -> None:
     settings = get_settings()
     db = SessionLocal()
+    task_started_clock = perf_counter()
     try:
         task = db.scalar(
             select(Task)
@@ -135,6 +156,11 @@ async def process_task(task_id: str) -> None:
         )
         if task is None:
             return
+        if task.started_at is None:
+            task.started_at = _utcnow()
+        task.finished_at = None
+        db.add(task)
+        db.commit()
 
         raw_webhook = _get_raw_webhook(task)
         installation_id = raw_webhook["installation"]["id"]
@@ -161,7 +187,9 @@ async def process_task(task_id: str) -> None:
 
             repo_config = load_repo_config(repo_path)
             sandbox = SandboxRunner()
+            install_started = perf_counter()
             install_result = sandbox.install_dependencies(repo_path, repo_config.install_command)
+            task.install_duration_ms = _elapsed_ms(install_started)
             db.add(
                 TaskArtifact(
                     task_id=task.id,
@@ -188,6 +216,8 @@ async def process_task(task_id: str) -> None:
             successful_attempt_index = None
             successful_diff_text = ""
             for attempt_index in range(1, settings.max_attempts + 1):
+                attempt_started_at = _utcnow()
+                attempt_started_clock = perf_counter()
                 task.attempt_count = attempt_index
                 db.add(task)
                 db.commit()
@@ -203,9 +233,13 @@ async def process_task(task_id: str) -> None:
                 tool_arguments = None
                 error_text = None
                 raw_response = None
+                model_started = perf_counter()
 
                 try:
                     result = agent.run(toolbox)
+                    model_duration_ms = _elapsed_ms(model_started)
+                    task.model_call_count += result.model_call_count
+                    task.tool_call_count += result.tool_call_count
                     diff_before_patch_text = diff(repo_path)
                     if result.patch_text and not diff_before_patch_text.strip():
                         toolbox.apply_patch(result.patch_text)
@@ -220,7 +254,11 @@ async def process_task(task_id: str) -> None:
                     )
 
                     transition_task(db, task, TaskStatus.testing)
+                    test_started = perf_counter()
                     test_result = sandbox.run_tests(repo_path, repo_config.test_command)
+                    task.patch_duration_ms = (task.patch_duration_ms or 0) + model_duration_ms
+                    test_duration_ms = _elapsed_ms(test_started)
+                    task.test_duration_ms = (task.test_duration_ms or 0) + test_duration_ms
                     _record_attempt(
                         db,
                         task,
@@ -233,6 +271,11 @@ async def process_task(task_id: str) -> None:
                         test_exit_code=test_result.exit_code,
                         test_stdout=test_result.stdout,
                         test_stderr=test_result.stderr,
+                        started_at=attempt_started_at,
+                        finished_at=_utcnow(),
+                        duration_ms=_elapsed_ms(attempt_started_clock),
+                        model_duration_ms=model_duration_ms,
+                        tool_call_count=result.tool_call_count,
                     )
                     db.commit()
 
@@ -254,6 +297,8 @@ async def process_task(task_id: str) -> None:
                 except Exception as exc:
                     diff_text = diff(repo_path)
                     error_text = str(exc)
+                    model_duration_ms = _elapsed_ms(model_started)
+                    task.patch_duration_ms = (task.patch_duration_ms or 0) + model_duration_ms
                     test_command = None
                     test_exit_code = None
                     test_stdout = None
@@ -266,11 +311,14 @@ async def process_task(task_id: str) -> None:
                         raw_response = exc.raw_response
                         tool_name = "final_response"
                     if diff_text.strip():
+                        test_started = perf_counter()
                         test_result = sandbox.run_tests(repo_path, repo_config.test_command)
                         test_command = repo_config.test_command
                         test_exit_code = test_result.exit_code
                         test_stdout = test_result.stdout
                         test_stderr = test_result.stderr
+                        test_duration_ms = _elapsed_ms(test_started)
+                        task.test_duration_ms = (task.test_duration_ms or 0) + test_duration_ms
                     _record_attempt(
                         db,
                         task,
@@ -283,6 +331,11 @@ async def process_task(task_id: str) -> None:
                         test_exit_code=test_exit_code,
                         test_stdout=test_stdout,
                         test_stderr=test_stderr,
+                        started_at=attempt_started_at,
+                        finished_at=_utcnow(),
+                        duration_ms=_elapsed_ms(attempt_started_clock),
+                        model_duration_ms=model_duration_ms,
+                        tool_call_count=result.tool_call_count if result is not None else 0,
                         error_text=error_text,
                         tool_name=tool_name,
                         tool_arguments=tool_arguments,
@@ -320,6 +373,9 @@ async def process_task(task_id: str) -> None:
                         task.issue.github_issue_number,
                         format_issue_failure_comment(task.failure_reason["reason"], task.attempt_count),
                     )
+                task.finished_at = _utcnow()
+                task.total_duration_ms = _elapsed_ms(task_started_clock)
+                db.commit()
                 return
 
             try:
@@ -413,6 +469,8 @@ async def process_task(task_id: str) -> None:
                     )
                     await issue_service.add_labels(task.repository.owner, task.repository.name, pr["number"], [settings.pr_review_label])
                 transition_task(db, task, TaskStatus.done)
+                task.finished_at = _utcnow()
+                task.total_duration_ms = _elapsed_ms(task_started_clock)
                 db.commit()
                 return
             except Exception as exc:
@@ -427,6 +485,8 @@ async def process_task(task_id: str) -> None:
                         "head_commit": task.head_commit,
                     },
                 )
+                task.finished_at = _utcnow()
+                task.total_duration_ms = _elapsed_ms(task_started_clock)
                 db.commit()
         finally:
             temp_dir_obj.cleanup()
@@ -435,6 +495,8 @@ async def process_task(task_id: str) -> None:
         task = db.get(Task, task_id)
         if task is not None:
             mark_task_failed(db, task, "worker_exception", {"error": str(exc)})
+            task.finished_at = _utcnow()
+            task.total_duration_ms = _elapsed_ms(task_started_clock)
             db.commit()
     finally:
         db.close()

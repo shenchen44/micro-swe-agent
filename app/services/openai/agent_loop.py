@@ -13,6 +13,8 @@ class AgentRunResult:
     pr_title: str
     pr_body_summary: dict
     raw_response: str = ""
+    model_call_count: int = 0
+    tool_call_count: int = 0
 
 
 class AgentResponseParseError(ValueError):
@@ -103,6 +105,8 @@ class AgentLoop:
         self.client = client or OpenAIChatClient()
 
     def run(self, toolbox: AgentToolbox) -> AgentRunResult:
+        model_call_count = 0
+        tool_call_count = 0
         messages: list[dict] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -117,8 +121,10 @@ class AgentLoop:
 
         while True:
             response = self.client.create_completion(messages=messages, tools=toolbox.tool_schemas())
+            model_call_count += 1
             response_message = response.choices[0].message
             tool_calls = response_message.tool_calls or []
+            tool_call_count += len(tool_calls)
             if not tool_calls:
                 break
 
@@ -157,4 +163,6 @@ class AgentLoop:
             pr_title=parsed.get("pr_title") or "fix: resolve issue",
             pr_body_summary=parsed.get("pr_body_summary") or {},
             raw_response=payload,
+            model_call_count=model_call_count,
+            tool_call_count=tool_call_count,
         )

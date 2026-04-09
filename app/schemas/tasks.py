@@ -15,6 +15,11 @@ class TaskAttemptRead(BaseModel):
     test_exit_code: int | None
     test_stdout: str | None
     test_stderr: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_ms: int | None
+    model_duration_ms: int | None
+    tool_call_count: int
     result_status: TaskResultStatus
     created_at: datetime
 
@@ -41,6 +46,14 @@ class TaskRead(BaseModel):
     head_commit: str | None
     pr_number: int | None
     failure_reason: dict | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    total_duration_ms: int | None
+    install_duration_ms: int | None
+    patch_duration_ms: int | None
+    test_duration_ms: int | None
+    model_call_count: int
+    tool_call_count: int
     created_at: datetime
     updated_at: datetime
     attempts: list[TaskAttemptRead] = []
