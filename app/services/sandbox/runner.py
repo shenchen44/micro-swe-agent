@@ -14,7 +14,15 @@ class CommandResult:
 
 
 class SandboxRunner:
-    """Runs install and test commands inside a disposable Docker container."""
+    """Runs install and test commands inside a disposable Docker container.
+
+    Security features:
+    - Network isolation (--network=none) prevents data exfiltration during tests
+    - Install commands may use network access to resolve package dependencies
+    - Memory and CPU limits prevent resource abuse
+    - Timeout prevents hanging processes
+    - Commands are validated before execution (see repo_config.validate_command)
+    """
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -46,25 +54,47 @@ class SandboxRunner:
 
         return Path(host_root).expanduser().resolve() / relative_path
 
-    def run(self, repo_path: Path, command: str, *, create_venv: bool = False) -> CommandResult:
+    def run(
+        self,
+        repo_path: Path,
+        command: str,
+        *,
+        create_venv: bool = False,
+        allow_network: bool = False,
+    ) -> CommandResult:
         shell_command = self._build_shell_command(command, create_venv=create_venv)
         mount_path = self._resolve_mount_path(repo_path)
-        process = subprocess.run(
+        command_args = [
+            "docker",
+            "run",
+            "--rm",
+            # Resource limits
+            "--memory",
+            self.settings.sandbox_memory_limit,
+            "--cpus",
+            str(self.settings.sandbox_cpu_limit),
+        ]
+        if not allow_network:
+            # Security: network isolation prevents data exfiltration during tests
+            command_args.append("--network=none")
+
+        command_args.extend(
             [
-                "docker",
-                "run",
-                "--rm",
-                "--memory",
-                self.settings.sandbox_memory_limit,
-                "--cpus",
-                str(self.settings.sandbox_cpu_limit),
+                # Security: read-only root filesystem (workspace is mounted writable)
+                "--read-only",
+                # Mount workspace as writable
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=100m",
                 "-v",
-                f"{mount_path}:/workspace",
+                f"{mount_path}:/workspace:rw",
                 self.settings.sandbox_base_image,
                 "sh",
                 "-lc",
                 shell_command,
-            ],
+            ]
+        )
+        process = subprocess.run(
+            command_args,
             text=True,
             capture_output=True,
             timeout=self.settings.sandbox_timeout_seconds,
@@ -73,7 +103,7 @@ class SandboxRunner:
         return CommandResult(exit_code=process.returncode, stdout=process.stdout, stderr=process.stderr)
 
     def install_dependencies(self, repo_path: Path, install_command: str) -> CommandResult:
-        return self.run(repo_path, install_command, create_venv=True)
+        return self.run(repo_path, install_command, create_venv=True, allow_network=True)
 
     def run_tests(self, repo_path: Path, test_command: str) -> CommandResult:
         return self.run(repo_path, test_command, create_venv=False)

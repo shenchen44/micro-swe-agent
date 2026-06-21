@@ -59,6 +59,50 @@ def test_dashboard_lists_only_open_pr_items(client, db_session, monkeypatch) -> 
     assert "change a" in payload[0]["changes"]
 
 
+def test_dashboard_lists_failed_tasks_without_pr(client, db_session, monkeypatch) -> None:
+    repository = Repository(github_repo_id=123, owner="octo", name="demo-repo", default_branch="main", is_active=True)
+    db_session.add(repository)
+    db_session.flush()
+    issue = Issue(
+        repository_id=repository.id,
+        github_issue_number=9,
+        github_issue_id=9000,
+        title="Add arithmetic helpers",
+        body="body",
+        labels=[{"name": "agent-fixable"}],
+        state="open",
+        html_url="https://github.com/octo/demo-repo/issues/9",
+    )
+    db_session.add(issue)
+    db_session.flush()
+    task = Task(
+        repository_id=repository.id,
+        issue_id=issue.id,
+        status=TaskStatus.failed,
+        attempt_count=3,
+        failure_reason={"reason": "patch_failed", "details": {"error": "rate limit"}},
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    class UnexpectedAuthService:
+        async def get_installation_token(self, installation_id: int) -> str:
+            raise AssertionError("failed tasks without PRs should not call GitHub PR APIs")
+
+    monkeypatch.setattr("app.api.routes.dashboard.GitHubAuthService", UnexpectedAuthService)
+
+    response = client.get("/dashboard/prs")
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["task_id"] == task.id
+    assert payload[0]["status"] == "failed"
+    assert payload[0]["issue_number"] == 9
+    assert payload[0]["pr_number"] is None
+    assert payload[0]["merge_status_label"] == "Failed"
+    assert "rate limit" in payload[0]["merge_status_detail"]
+
+
 def test_dashboard_change_summary_falls_back_to_pr_body(client, db_session, monkeypatch) -> None:
     repository = Repository(github_repo_id=123, owner="octo", name="demo-repo", default_branch="main", is_active=True)
     db_session.add(repository)

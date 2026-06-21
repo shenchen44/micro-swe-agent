@@ -59,6 +59,18 @@ def _resolution_link_for_task(task: Task) -> dict:
     return artifact if isinstance(artifact, dict) else {}
 
 
+def _failure_detail_for_task(task: Task) -> str:
+    if not task.failure_reason:
+        return "Agent task has not opened a pull request yet."
+    reason = task.failure_reason.get("reason") or "failed"
+    details = task.failure_reason.get("details")
+    if isinstance(details, dict):
+        error = details.get("error")
+        if error:
+            return f"{reason}: {error}"
+    return reason
+
+
 def _extract_changes_from_pr_body(pr_body: str) -> list[str]:
     if not pr_body:
         return []
@@ -607,7 +619,7 @@ def dashboard_page() -> Response:
       Integration Workspace
     </div>
     <div class="header-stats">
-      <span id="openCount">0</span> Open PRs
+      <span id="openCount">0</span> Agent Tasks
       <button id="refreshBtn" style="margin-left: 12px;">Refresh</button>
     </div>
   </header>
@@ -687,7 +699,7 @@ def dashboard_page() -> Response:
         document.getElementById('openCount').textContent = state.items.length;
         
         if (state.items.length === 0) {
-          listEl.innerHTML = '<div class="empty-state card">No active agent PRs found.</div>';
+          listEl.innerHTML = '<div class="empty-state card">No agent tasks found.</div>';
           updateSidebar();
           return;
         }
@@ -695,6 +707,9 @@ def dashboard_page() -> Response:
         listEl.innerHTML = state.items.map(item => {
           const isSelected = state.selected.has(item.task_id);
           const isConflict = item.merge_conflict;
+          const hasPr = item.pr_number !== null && item.pr_number !== undefined;
+          const titleUrl = hasPr ? item.pr_url : item.issue_url;
+          const titleNumber = hasPr ? `#${item.pr_number}` : (item.issue_number ? `issue #${item.issue_number}` : item.status);
           
           let conflictWarning = '';
           if (isConflict) {
@@ -719,15 +734,15 @@ def dashboard_page() -> Response:
             <div class="card pr-item">
               <div class="pr-item-header">
                 <div class="pr-item-header-left">
-                  <input type="checkbox" class="pr-checkbox" data-id="${item.task_id}" ${isSelected ? 'checked' : ''}>
+                  ${hasPr ? `<input type="checkbox" class="pr-checkbox" data-id="${item.task_id}" ${isSelected ? 'checked' : ''}>` : '<span style="width: 16px;"></span>'}
                   <div>
                     <div class="pr-meta">
                       <span class="pr-repo">${escapeHtml(item.repository)}</span>
                       <span>•</span>
                       <span>Task #${item.task_id.substring(0,8)}...</span>
                     </div>
-                    <a href="${item.pr_url}" target="_blank" class="pr-title">
-                      ${escapeHtml(item.title)} <span style="color: var(--text-muted); font-weight: normal;">#${item.pr_number}</span>
+                    <a href="${titleUrl}" target="_blank" class="pr-title">
+                      ${escapeHtml(item.title)} <span style="color: var(--text-muted); font-weight: normal;">${escapeHtml(titleNumber)}</span>
                     </a>
                   </div>
                 </div>
@@ -748,7 +763,7 @@ def dashboard_page() -> Response:
                 </div>
 
                 <div class="pr-section">
-                  <div class="pr-section-title">Mergeability</div>
+                  <div class="pr-section-title">${hasPr ? 'Mergeability' : 'Task Status'}</div>
                   ${conflictWarning}
                   ${supersededHtml}
                 </div>
@@ -760,13 +775,13 @@ def dashboard_page() -> Response:
               </div>
 
               <div class="pr-actions">
-                <a href="${item.pr_url}" target="_blank" style="text-decoration:none;">
-                  <button type="button">View on GitHub</button>
+                <a href="${titleUrl}" target="_blank" style="text-decoration:none;">
+                  <button type="button">${hasPr ? 'View PR on GitHub' : 'View Issue on GitHub'}</button>
                 </a>
-                <button type="button" class="success" onclick="handleMerge('${item.task_id}')" 
+                ${hasPr ? `<button type="button" class="success" onclick="handleMerge('${item.task_id}')" 
                   ${(isConflict || item.superseded_by_pr_number) ? 'disabled title="This PR cannot be merged directly"' : ''}>
                   Merge PR
-                </button>
+                </button>` : ''}
                 ${isConflict && !item.superseded_by_pr_number ? `
                   <button type="button" class="primary" onclick="handleResolveConflict('${item.task_id}')">
                     Resolve Conflict
@@ -884,9 +899,9 @@ async def list_pr_dashboard_items(db: Session = Depends(get_db)) -> list[dict]:
     tasks = list(
         db.scalars(
             select(Task)
-            .where(Task.pr_number.is_not(None))
             .options(selectinload(Task.repository), selectinload(Task.issue), selectinload(Task.artifacts), selectinload(Task.attempts))
             .order_by(Task.updated_at.desc())
+            .limit(50)
         )
     )
     items: list[dict] = []
@@ -894,21 +909,6 @@ async def list_pr_dashboard_items(db: Session = Depends(get_db)) -> list[dict]:
     token_cache: dict[int, str] = {}
     pr_service_cache: dict[int, GitHubPullRequestService] = {}
     for task in tasks:
-        installation_id = _installation_id_for_task(task)
-        if installation_id is None:
-            continue
-        if installation_id not in token_cache:
-            token_cache[installation_id] = await auth_service.get_installation_token(installation_id)
-            pr_service_cache[installation_id] = GitHubPullRequestService(token_cache[installation_id])
-        pr_payload = await pr_service_cache[installation_id].get_pull_request(
-            task.repository.owner,
-            task.repository.name,
-            task.pr_number,
-        )
-        if pr_payload.get("state") != "open":
-            continue
-        merge_status, merge_status_label, merge_conflict = _merge_status_from_payload(pr_payload)
-        resolution_link = _resolution_link_for_task(task)
         model_response = get_artifact_content(task, TaskArtifactType.model_response)
         diff_artifact = get_artifact_content(task, TaskArtifactType.diff)
         pr_body_artifact = get_artifact_content(task, TaskArtifactType.pr_body)
@@ -927,12 +927,58 @@ async def list_pr_dashboard_items(db: Session = Depends(get_db)) -> list[dict]:
             root_cause = _extract_section_from_pr_body(pr_body, "## Summary")
         if _is_generic_root_cause(root_cause):
             root_cause = _summarize_diff_root_cause(diff_text)
+
+        if task.pr_number is None:
+            status_label = "Failed" if task.status == TaskStatus.failed else task.status.value.replace("_", " ").title()
+            status_detail = _failure_detail_for_task(task) if task.status == TaskStatus.failed else "Task accepted by the agent and is being processed."
+            items.append(
+                {
+                    "task_id": task.id,
+                    "repository": f"{task.repository.owner}/{task.repository.name}",
+                    "title": task.issue.title,
+                    "status": task.status.value,
+                    "issue_number": task.issue.github_issue_number,
+                    "issue_url": task.issue.html_url,
+                    "pr_number": None,
+                    "pr_url": "",
+                    "root_cause": root_cause or status_detail,
+                    "changes": changes,
+                    "diff": diff_text,
+                    "pr_body": pr_body,
+                    "merge_status": "conflicting" if task.status == TaskStatus.failed else "checking",
+                    "merge_status_label": status_label,
+                    "merge_status_detail": status_detail,
+                    "merge_conflict": False,
+                    "superseded_by_task_id": None,
+                    "superseded_by_pr_number": None,
+                    "superseded_by_pr_url": "",
+                }
+            )
+            continue
+
+        installation_id = _installation_id_for_task(task)
+        if installation_id is None:
+            continue
+        if installation_id not in token_cache:
+            token_cache[installation_id] = await auth_service.get_installation_token(installation_id)
+            pr_service_cache[installation_id] = GitHubPullRequestService(token_cache[installation_id])
+        pr_payload = await pr_service_cache[installation_id].get_pull_request(
+            task.repository.owner,
+            task.repository.name,
+            task.pr_number,
+        )
+        if pr_payload.get("state") != "open":
+            continue
+        merge_status, merge_status_label, merge_conflict = _merge_status_from_payload(pr_payload)
+        resolution_link = _resolution_link_for_task(task)
         items.append(
             {
                 "task_id": task.id,
                 "repository": f"{task.repository.owner}/{task.repository.name}",
                 "title": task.issue.title,
                 "status": task.status.value,
+                "issue_number": task.issue.github_issue_number,
+                "issue_url": task.issue.html_url,
                 "pr_number": task.pr_number,
                 "pr_url": f"https://github.com/{task.repository.owner}/{task.repository.name}/pull/{task.pr_number}",
                 "root_cause": root_cause,

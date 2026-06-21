@@ -30,6 +30,7 @@ def test_install_dependencies_bootstraps_repo_local_venv(workspace_tmp_dir, monk
     assert ". .venv/bin/activate" in shell_command
     assert "python -m pip install --upgrade pip" in shell_command
     assert shell_command.endswith("pip install -r requirements.txt")
+    assert "--network=none" not in commands[0]
 
 
 def test_run_tests_uses_repo_local_venv(workspace_tmp_dir, monkeypatch) -> None:
@@ -51,6 +52,7 @@ def test_run_tests_uses_repo_local_venv(workspace_tmp_dir, monkeypatch) -> None:
     assert "python -m venv .venv" not in shell_command
     assert ". .venv/bin/activate" in shell_command
     assert shell_command.endswith("python -m pytest -q")
+    assert "--network=none" in commands[0]
 
 
 def test_install_then_run_tests_reuses_repo_local_venv(workspace_tmp_dir, monkeypatch) -> None:
@@ -99,5 +101,5 @@ def test_run_maps_container_workspace_to_host_path(monkeypatch) -> None:
     assert result.exit_code == 0
     assert commands
     volume_index = commands[0].index("-v") + 1
-    assert commands[0][volume_index] == "/Users/example/project/.workspaces/task/repo:/workspace"
+    assert commands[0][volume_index] == "/Users/example/project/.workspaces/task/repo:/workspace:rw"
     get_settings.cache_clear()
